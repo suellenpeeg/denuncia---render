@@ -556,4 +556,113 @@ if page == 'Historico':
 
     mask = pd.Series([True]*len(display_df))
     if q_ext: mask = mask & display_df['external_id'].str.contains(q_ext, na=False)
-    if q_status and q_status != 'To
+    if q_status and q_status != 'Todos': mask = mask & (display_df['status'] == q_status)
+    if q_text: mask = mask & (display_df['descricao'].str.contains(q_text, na=False) | display_df['rua'].str.contains(q_text, na=False))
+
+    filtered = display_df[mask]
+
+    # Exibição
+    st.subheader(f'Resultados ({len(filtered)})')
+    
+    styled_df = filtered[['id','external_id','created_at','status','num_reincidencias','bairro','tipo','acao_noturna']].copy()
+    styled_df['created_at'] = styled_df['created_at'].dt.strftime('%d/%m/%Y')
+    styled_df.columns = ['ID', 'Nº OS', 'Data', 'Status', 'Reincidências', 'Bairro', 'Tipo', 'Noturna']
+    st.dataframe(styled_df, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("Gerenciar Denúncia (Adicionar Reincidência / Editar / PDF)")
+    
+    selected_os = st.selectbox("Selecione a denúncia pelo Número OS:", options=filtered['external_id'].tolist())
+    
+    if selected_os:
+        # Pega linha e FORÇA CONVERSÃO DE TIPOS
+        row = filtered[filtered['external_id'] == selected_os].iloc[0]
+        # Pegar ID como inteiro nativo do Python
+        row_id_nativo = int(row['id'])
+        
+        st.info(f"Gerenciando OS: **{row['external_id']}** | Status Atual: **{row['status']}** | Reincidências: **{row['num_reincidencias']}**")
+        
+        tab_reinc, tab_edit, tab_acoes = st.tabs(["🔄 Adicionar Reincidência", "✏️ Editar Dados", "🗑️ Ações de Status/Exclusão"])
+        
+        # --- ABA REINCIDÊNCIA ---
+        with tab_reinc:
+            st.write("Registrar nova reincidência para esta denúncia.")
+            with st.form(key=f"reinc_form_{row_id_nativo}"):
+                reinc_fonte = st.selectbox("Fonte da Reincidência", OPCOES_ORIGEM)
+                reinc_desc = st.text_area("Descrição da Reincidência / Fato Novo")
+                
+                if st.form_submit_button("➕ Registrar Reincidência e Gerar PDF"):
+                    if reinc_desc:
+                        insert_reincidencia(row_id_nativo, reinc_fonte, reinc_desc)
+                        st.success("Reincidência registrada!")
+                        
+                        # Gera PDF atualizado
+                        rec_data = fetch_denuncia_by_id(row_id_nativo)
+                        rec_reinc = fetch_reincidencias(row_id_nativo)
+                        pdf_bytes = create_pdf_from_record(rec_data, rec_reinc)
+                        
+                        st.download_button(
+                            label="📥 Baixar PDF Atualizado (Com Reincidência)",
+                            data=pdf_bytes,
+                            file_name=f"OS_{row['external_id'].replace('/', '_')}_REINC.pdf",
+                            mime='application/pdf'
+                        )
+                        st.rerun() 
+                    else:
+                        st.error("Preencha a descrição.")
+
+        # --- ABA EDIÇÃO ---
+        with tab_edit:
+            with st.form(key=f"edit_form_{row_id_nativo}"):
+                e_origem = st.selectbox('Origem', OPCOES_ORIGEM, index=safe_index(OPCOES_ORIGEM, row['origem']))
+                e_tipo = st.selectbox('Tipo', OPCOES_TIPO, index=safe_index(OPCOES_TIPO, row['tipo']))
+                e_noturna = st.checkbox("Ação Noturna?", value=bool(row['acao_noturna']))
+                e_bairro = st.selectbox('Bairro', OPCOES_BAIRROS, index=safe_index(OPCOES_BAIRROS, row['bairro']))
+                e_zona = st.selectbox('Zona', OPCOES_ZONA, index=safe_index(OPCOES_ZONA, row['zona']))
+                e_rua = st.text_input("Rua", row['rua'])
+                e_num = st.text_input("Número", row['numero'])
+                e_desc = st.text_area("Descrição", row['descricao'])
+                e_quem = st.selectbox('Quem recebeu', OPCOES_FISCAIS, index=safe_index(OPCOES_FISCAIS, row['quem_recebeu']))
+                
+                if st.form_submit_button("Salvar Edição"):
+                    new_row = row.to_dict()
+                    new_row.update({
+                        'origem': e_origem, 'tipo': e_tipo, 'acao_noturna': e_noturna,
+                        'bairro': e_bairro, 'zona': e_zona, 'rua': e_rua, 'numero': e_num,
+                        'descricao': e_desc, 'quem_recebeu': e_quem
+                    })
+                    update_denuncia_full(row_id_nativo, new_row)
+                    st.success("Dados atualizados!")
+                    st.rerun()
+
+        # --- ABA AÇÕES ---
+        with tab_acoes:
+            col_a1, col_a2, col_a3 = st.columns(3)
+            
+            with col_a1:
+                new_st = st.selectbox("Alterar Status", OPCOES_STATUS, index=safe_index(OPCOES_STATUS, row['status']))
+                if st.button("Atualizar Status"):
+                    update_denuncia_status(row_id_nativo, new_st)
+                    st.success(f"Status alterado para {new_st}")
+                    st.rerun()
+            
+            with col_a2:
+                st.write("Baixar PDF Atual")
+                # Busca dados frescos
+                rec_data = fetch_denuncia_by_id(row_id_nativo)
+                rec_reinc = fetch_reincidencias(row_id_nativo)
+                pdf_bytes = create_pdf_from_record(rec_data, rec_reinc)
+                
+                st.download_button(
+                    label="📥 Download PDF",
+                    data=pdf_bytes,
+                    file_name=f"OS_{row['external_id'].replace('/', '_')}.pdf",
+                    mime='application/pdf'
+                )
+
+            with col_a3:
+                st.write("Zona de Perigo")
+                if st.button("🗑️ Excluir Denúncia", type="primary"):
+                    delete_denuncia(row_id_nativo)
+                    st.error("Denúncia excluída!")
+                    st.rerun()
