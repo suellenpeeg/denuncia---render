@@ -1,4 +1,5 @@
-import streamlit as st
+
+        import streamlit as st
 import pandas as pd
 import os
 import psycopg2
@@ -75,7 +76,6 @@ def init_db():
         );
     ''')
     
-    # Criar admin padrão
     cur.execute("SELECT * FROM users WHERE username = %s", ('admin',))
     if not cur.fetchone():
         pass_hash = hash_password('fisc2023')
@@ -102,14 +102,12 @@ def init_db():
         );
     ''')
 
-    # 3. Atualização de Schema (Adicionar coluna acao_noturna)
     try:
         cur.execute("ALTER TABLE denuncias ADD COLUMN IF NOT EXISTS acao_noturna BOOLEAN DEFAULT FALSE;")
     except Exception:
-        conn.rollback() 
-        # Ignora se der erro, assume que já existe ou algo assim
+        conn.rollback()
 
-    # 4. Tabela de Reincidências
+    # 3. Tabela de Reincidências
     cur.execute('''
         CREATE TABLE IF NOT EXISTS reincidencias (
             id SERIAL PRIMARY KEY,
@@ -178,7 +176,6 @@ def generate_external_id():
 def insert_denuncia(record):
     conn = get_db_connection()
     cur = conn.cursor()
-    # Forçar booleano puro do Python para evitar erro de tipo
     noturna_bool = bool(record.get('acao_noturna', False))
     
     cur.execute('''
@@ -198,7 +195,6 @@ def insert_reincidencia(denuncia_id, fonte, descricao):
     conn = get_db_connection()
     cur = conn.cursor()
     created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # cast int() aqui para garantir
     cur.execute('''
         INSERT INTO reincidencias (denuncia_id, created_at, fonte, descricao)
         VALUES (%s, %s, %s, %s)
@@ -210,7 +206,6 @@ def insert_reincidencia(denuncia_id, fonte, descricao):
 def fetch_reincidencias(denuncia_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    # cast int() aqui para garantir
     cur.execute("SELECT * FROM reincidencias WHERE denuncia_id = %s ORDER BY created_at ASC", (int(denuncia_id),))
     cols = [desc[0] for desc in cur.description]
     rows = cur.fetchall()
@@ -233,7 +228,6 @@ def fetch_all_denuncias():
 def fetch_denuncia_by_id(id_):
     conn = get_db_connection()
     cur = conn.cursor()
-    # cast int()
     cur.execute('SELECT * FROM denuncias WHERE id = %s', (int(id_),))
     if cur.description:
         colnames = [desc[0] for desc in cur.description]
@@ -250,7 +244,6 @@ def fetch_denuncia_by_id(id_):
 def update_denuncia_status(id_, status):
     conn = get_db_connection()
     cur = conn.cursor()
-    # cast int()
     cur.execute('UPDATE denuncias SET status = %s WHERE id = %s', (status, int(id_)))
     conn.commit()
     cur.close()
@@ -259,7 +252,6 @@ def update_denuncia_status(id_, status):
 def delete_denuncia(id_):
     conn = get_db_connection()
     cur = conn.cursor()
-    # cast int()
     cur.execute('DELETE FROM denuncias WHERE id = %s', (int(id_),))
     conn.commit()
     cur.close()
@@ -268,8 +260,6 @@ def delete_denuncia(id_):
 def update_denuncia_full(id_, row):
     conn = get_db_connection()
     cur = conn.cursor()
-    
-    # Garante tipos Python nativos
     noturna_bool = bool(row['acao_noturna'])
     
     cur.execute('''UPDATE denuncias SET origem=%s, tipo=%s, rua=%s, numero=%s, bairro=%s, zona=%s, latitude=%s, longitude=%s, descricao=%s, quem_recebeu=%s, status=%s, acao_noturna=%s WHERE id=%s''', (
@@ -282,7 +272,7 @@ def update_denuncia_full(id_, row):
     conn.close()
 
 # =========================================
-# GERAÇÃO DE PDF (CORRIGIDA)
+# GERAÇÃO DE PDF
 # =========================================
 class PDF(FPDF):
     def header(self):
@@ -297,20 +287,16 @@ class PDF(FPDF):
 def create_pdf_from_record(record, reincidencias=None):
     pdf = PDF()
     
-    # --- PÁGINA 1: Denúncia Principal ---
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
 
-    # Header Info
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, f"Ordem de Serviço Nº {record['external_id']}", ln=True, align='L')
     pdf.ln(2)
 
     pdf.set_font("Arial", "", 11)
-    
     noturna_txt = "SIM" if record.get('acao_noturna') else "NÃO"
 
-    # Detalhes
     pdf.multi_cell(0, 6, f"""
 Data/Hora Registro: {record['created_at']}
 Origem: {record['origem']}
@@ -324,28 +310,24 @@ Status Atual: {record['status']}
 """)
     pdf.ln(4)
 
-    # Descrição
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "DESCRIÇÃO DA ORDEM DE SERVIÇO:", ln=True)
 
     pdf.set_font("Arial", "", 10)
     pdf.set_fill_color(240, 240, 240)
     desc_text = record['descricao'] if record['descricao'] else "Sem descrição."
-    # Tratamento para caracteres especiais
     try:
         pdf.multi_cell(0, 5, desc_text, 1, 'L', 1)
     except:
-        pdf.multi_cell(0, 5, "Erro na codificação do texto. Verifique caracteres especiais.", 1, 'L', 1)
+        pdf.multi_cell(0, 5, "Erro caractere", 1, 'L', 1)
         
     pdf.ln(6)
 
-    # Campo Observações
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "OBSERVAÇÕES DE CAMPO / AÇÕES REALIZADAS:", ln=True)
     pdf.multi_cell(0, 6, " " * 100 + "\n"*5, 1, 'L', 0) 
     pdf.ln(1)
     
-    # --- PÁGINAS SEGUINTES: Reincidências ---
     if reincidencias:
         for i, reinc in enumerate(reincidencias):
             pdf.add_page()
@@ -368,42 +350,7 @@ Fonte da Informação: {reinc['fonte']}
             r_desc = reinc['descricao'] if reinc['descricao'] else "Sem descrição."
             pdf.multi_cell(0, 5, r_desc, 1, 'L', 1)
 
-    # CORREÇÃO CRÍTICA DO PDF: Retornar bytes codificados em latin-1
     return pdf.output(dest="S").encode('latin-1')
-
-# =========================================
-# CALLBACKS
-# =========================================
-def handle_form_submit(external_id, created_at, origem, tipo, rua, numero, bairro, zona, lat, lon, descricao, quem_recebeu, acao_noturna):
-    record = {
-        'external_id': external_id,
-        'created_at': created_at,
-        'origem': origem,
-        'tipo': tipo,
-        'rua': rua,
-        'numero': numero,
-        'bairro': bairro,
-        'zona': zona,
-        'latitude': lat,
-        'longitude': lon,
-        'descricao': descricao,
-        'quem_recebeu': quem_recebeu,
-        'status': 'Pendente',
-        'acao_noturna': acao_noturna
-    }
-    try:
-        insert_denuncia(record)
-        st.success('Denúncia salva com sucesso!')
-        
-        # Gera PDF inicial
-        pdf_bytes = create_pdf_from_record(record, [])
-        
-        if pdf_bytes: 
-            st.session_state['download_pdf_data'] = pdf_bytes
-            st.session_state['download_pdf_id'] = external_id
-            if 'last_edited_pdf' in st.session_state: del st.session_state['last_edited_pdf']
-    except Exception as e:
-        st.error(f"Erro ao salvar: {e}")
 
 # =========================================
 # INICIALIZAÇÃO E UI
@@ -478,13 +425,16 @@ if page == 'Admin - Gestão de Usuários':
     st.dataframe(dfu)
     st.stop()
 
-# ---------------------- Página Registro ----------------------
+# ---------------------- Página Registro (CORRIGIDO) ----------------------
 if page == 'Registro da denuncia':
     st.header('Registro da Denúncia')
+    
+    # 1. REMOVIDO o argumento 'on_click' e 'args' para corrigir o bug de dados vazios.
+    # 2. Agora os dados são lidos diretamente dentro do if submitted.
     with st.form('registro'):
         external_id = generate_external_id()
-        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        st.write(f"**Id da denúncia (Prévia):** {external_id} | **Data:** {created_at}")
+        created_at_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        st.write(f"**Id da denúncia (Prévia):** {external_id} | **Data:** {created_at_str}")
 
         origem = st.selectbox('Origem da denúncia', OPCOES_ORIGEM)
         c_tipo, c_noturna = st.columns([3,1])
@@ -509,33 +459,59 @@ if page == 'Registro da denuncia':
         descricao = st.text_area('Descrição da Ordem de Serviço', height=150)
         quem_recebeu = st.selectbox('Quem recebeu a denúncia', OPCOES_FISCAIS)
 
-        st.form_submit_button(
-            'Salvar denúncia',
-            on_click=handle_form_submit,
-            args=(external_id, created_at, origem, tipo, rua, numero, bairro, zona, lat, lon, descricao, quem_recebeu, acao_noturna)
-        )
+        # Botão simples de submissão
+        submitted = st.form_submit_button('Salvar denúncia')
 
-    # Download PDF
+    # Lógica de processamento FORA do form para pegar os valores atualizados
+    if submitted:
+        record = {
+            'external_id': external_id,
+            'created_at': created_at_str,
+            'origem': origem,
+            'tipo': tipo,
+            'rua': rua,
+            'numero': numero,
+            'bairro': bairro,
+            'zona': zona,
+            'latitude': lat,
+            'longitude': lon,
+            'descricao': descricao,
+            'quem_recebeu': quem_recebeu,
+            'status': 'Pendente',
+            'acao_noturna': acao_noturna
+        }
+        try:
+            insert_denuncia(record)
+            st.success('Denúncia salva com sucesso!')
+            
+            # Gera PDF na hora e salva na sessão para download
+            pdf_bytes = create_pdf_from_record(record, [])
+            if pdf_bytes:
+                st.session_state['download_pdf_data'] = pdf_bytes
+                st.session_state['download_pdf_id'] = external_id
+                st.rerun()
+                
+        except Exception as e:
+            st.error(f"Erro ao salvar: {e}")
+
+    # Área de Download (Fora do Form)
     if 'download_pdf_data' in st.session_state and 'download_pdf_id' in st.session_state:
-        pdf_data = st.session_state['download_pdf_data']
-        pdf_id = st.session_state['download_pdf_id']
         st.markdown("---")
         col_down, col_clear = st.columns([1,1])
         with col_down:
             st.download_button(
                 label='📥 Baixar Ordem de Serviço (PDF)', 
-                data=pdf_data, 
-                file_name=f"OS_{pdf_id.replace('/', '_')}.pdf", 
+                data=st.session_state['download_pdf_data'], 
+                file_name=f"OS_{st.session_state['download_pdf_id'].replace('/', '_')}.pdf", 
                 mime='application/pdf'
             )
         with col_clear:
             if st.button("Limpar / Novo Registro"):
                 del st.session_state['download_pdf_data']
                 del st.session_state['download_pdf_id']
-                if 'last_edited_pdf' in st.session_state: del st.session_state['last_edited_pdf']
                 st.rerun()
 
-# ---------------------- Página Histórico ----------------------
+# ---------------------- Página Histórico (CORRIGIDO) ----------------------
 if page == 'Historico':
     st.header('Histórico de Denúncias')
     df = fetch_all_denuncias()
@@ -561,55 +537,59 @@ if page == 'Historico':
 
     filtered = display_df[mask]
 
-    # Exibição
     st.subheader(f'Resultados ({len(filtered)})')
-    
     styled_df = filtered[['id','external_id','created_at','status','num_reincidencias','bairro','tipo','acao_noturna']].copy()
     styled_df['created_at'] = styled_df['created_at'].dt.strftime('%d/%m/%Y')
     styled_df.columns = ['ID', 'Nº OS', 'Data', 'Status', 'Reincidências', 'Bairro', 'Tipo', 'Noturna']
     st.dataframe(styled_df, use_container_width=True)
 
     st.markdown("---")
-    st.subheader("Gerenciar Denúncia (Adicionar Reincidência / Editar / PDF)")
+    st.subheader("Gerenciar Denúncia")
     
     selected_os = st.selectbox("Selecione a denúncia pelo Número OS:", options=filtered['external_id'].tolist())
     
     if selected_os:
-        # Pega linha e FORÇA CONVERSÃO DE TIPOS
         row = filtered[filtered['external_id'] == selected_os].iloc[0]
-        # Pegar ID como inteiro nativo do Python
         row_id_nativo = int(row['id'])
         
         st.info(f"Gerenciando OS: **{row['external_id']}** | Status Atual: **{row['status']}** | Reincidências: **{row['num_reincidencias']}**")
         
         tab_reinc, tab_edit, tab_acoes = st.tabs(["🔄 Adicionar Reincidência", "✏️ Editar Dados", "🗑️ Ações de Status/Exclusão"])
         
-        # --- ABA REINCIDÊNCIA ---
+        # --- ABA REINCIDÊNCIA (CORRIGIDO: PDF FORA DO FORM) ---
         with tab_reinc:
-            st.write("Registrar nova reincidência para esta denúncia.")
+            st.write("Registrar nova reincidência.")
             with st.form(key=f"reinc_form_{row_id_nativo}"):
                 reinc_fonte = st.selectbox("Fonte da Reincidência", OPCOES_ORIGEM)
                 reinc_desc = st.text_area("Descrição da Reincidência / Fato Novo")
-                
-                if st.form_submit_button("➕ Registrar Reincidência e Gerar PDF"):
-                    if reinc_desc:
-                        insert_reincidencia(row_id_nativo, reinc_fonte, reinc_desc)
-                        st.success("Reincidência registrada!")
-                        
-                        # Gera PDF atualizado
-                        rec_data = fetch_denuncia_by_id(row_id_nativo)
-                        rec_reinc = fetch_reincidencias(row_id_nativo)
-                        pdf_bytes = create_pdf_from_record(rec_data, rec_reinc)
-                        
-                        st.download_button(
-                            label="📥 Baixar PDF Atualizado (Com Reincidência)",
-                            data=pdf_bytes,
-                            file_name=f"OS_{row['external_id'].replace('/', '_')}_REINC.pdf",
-                            mime='application/pdf'
-                        )
-                        st.rerun() 
-                    else:
-                        st.error("Preencha a descrição.")
+                # Botão apenas salva
+                submit_reinc = st.form_submit_button("➕ Registrar Reincidência")
+            
+            # Lógica fora do form
+            if submit_reinc:
+                if reinc_desc:
+                    insert_reincidencia(row_id_nativo, reinc_fonte, reinc_desc)
+                    st.success("Reincidência registrada com sucesso!")
+                    
+                    # Gera PDF e coloca na sessão temporária
+                    rec_data = fetch_denuncia_by_id(row_id_nativo)
+                    rec_reinc = fetch_reincidencias(row_id_nativo)
+                    pdf_bytes = create_pdf_from_record(rec_data, rec_reinc)
+                    
+                    st.session_state['temp_pdf_bytes'] = pdf_bytes
+                    st.session_state['temp_pdf_name'] = f"OS_{row['external_id'].replace('/', '_')}_REINC.pdf"
+                    st.rerun()
+                else:
+                    st.error("Preencha a descrição.")
+            
+            # Exibe botão de download se acabou de gerar
+            if 'temp_pdf_bytes' in st.session_state:
+                st.download_button(
+                    label="📥 Baixar PDF Atualizado (Última Ação)",
+                    data=st.session_state['temp_pdf_bytes'],
+                    file_name=st.session_state['temp_pdf_name'],
+                    mime='application/pdf'
+                )
 
         # --- ABA EDIÇÃO ---
         with tab_edit:
@@ -648,21 +628,15 @@ if page == 'Historico':
             
             with col_a2:
                 st.write("Baixar PDF Atual")
-                # Busca dados frescos
-                rec_data = fetch_denuncia_by_id(row_id_nativo)
-                rec_reinc = fetch_reincidencias(row_id_nativo)
-                pdf_bytes = create_pdf_from_record(rec_data, rec_reinc)
+                if st.button("Gerar PDF"):
+                    rec_data = fetch_denuncia_by_id(row_id_nativo)
+                    rec_reinc = fetch_reincidencias(row_id_nativo)
+                    pdf_bytes = create_pdf_from_record(rec_data, rec_reinc)
+                    st.session_state['temp_pdf_view'] = pdf_bytes
                 
-                st.download_button(
-                    label="📥 Download PDF",
-                    data=pdf_bytes,
-                    file_name=f"OS_{row['external_id'].replace('/', '_')}.pdf",
-                    mime='application/pdf'
-                )
-
-            with col_a3:
-                st.write("Zona de Perigo")
-                if st.button("🗑️ Excluir Denúncia", type="primary"):
-                    delete_denuncia(row_id_nativo)
-                    st.error("Denúncia excluída!")
-                    st.rerun()
+                if 'temp_pdf_view' in st.session_state:
+                     st.download_button(
+                        label="📥 Download PDF",
+                        data=st.session_state['temp_pdf_view'],
+                        file_name=f"OS_{row['external_id'].replace('/', '_')}.pdf",
+                        mime='application/pdf'
